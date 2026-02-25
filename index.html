@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Advanced SNOC Assistant</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+<style>
+body { font-family: Arial; padding:20px; }
+table { border-collapse: collapse; margin-top:20px; }
+th, td { border:1px solid #ccc; padding:5px; min-width:140px; }
+select, input, textarea { width:100%; box-sizing:border-box; }
+.notfound { background-color:#ffcccc; }
+.found { background-color:#ccffcc; }
+</style>
+</head>
+<body>
+
+<h2>Advanced SNOC Assistant</h2>
+
+<label>Загрузить отчёты (можно несколько):</label>
+<input type="file" id="upload" accept=".xlsx,.xls" multiple><br><br>
+
+<label>Вставить список SN (по одному на строку):</label>
+<textarea id="bulkSN" rows="5"></textarea>
+<button onclick="insertBulkSN()">Вставить</button>
+
+<button onclick="exportExcel()">Экспорт в Excel</button>
+
+<table id="mainTable">
+<thead>
+<tr id="headerRow">
+<th>SN</th>
+</tr>
+<tr id="filterRow">
+<th></th>
+</tr>
+</thead>
+<tbody id="tableBody"></tbody>
+</table>
+
+<script>
+let reportData = [];
+let headers = new Set();
+let columnCount = 30;
+
+const headerRow = document.getElementById("headerRow");
+const filterRow = document.getElementById("filterRow");
+
+// создаём 30 колонок
+for(let i=0;i<columnCount;i++){
+    let th = document.createElement("th");
+    th.innerText = "Column " + (i+1);
+    headerRow.appendChild(th);
+
+    let filterCell = document.createElement("th");
+    let select = document.createElement("select");
+    select.dataset.columnIndex = i;
+    select.onchange = saveAndUpdate;
+    filterCell.appendChild(select);
+    filterRow.appendChild(filterCell);
+}
+
+// загрузка файлов
+document.getElementById('upload').addEventListener('change', function(e){
+    const files = e.target.files;
+
+    Array.from(files).forEach(file=>{
+        const reader = new FileReader();
+        reader.onload = function(e){
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data,{type:'array'});
+            const sheet = workbook.Sheets[workbook.SheetNames[0]];
+            const json = XLSX.utils.sheet_to_json(sheet);
+
+            json.forEach(row=>{
+                reportData.push(row);
+                Object.keys(row).forEach(key=>headers.add(key));
+            });
+
+            localStorage.setItem("reportCache", JSON.stringify(reportData));
+            populateDropdowns();
+        };
+        reader.readAsArrayBuffer(file);
+    });
+});
+
+// восстановление кэша
+window.onload = function(){
+    const cache = localStorage.getItem("reportCache");
+    if(cache){
+        reportData = JSON.parse(cache);
+        reportData.forEach(r=>Object.keys(r).forEach(k=>headers.add(k)));
+        populateDropdowns();
+    }
+
+    const savedColumns = JSON.parse(localStorage.getItem("selectedColumns"));
+    if(savedColumns){
+        document.querySelectorAll("select").forEach((s,i)=>{
+            if(savedColumns[i]) s.value = savedColumns[i];
+        });
+    }
+
+    addRow();
+};
+
+function populateDropdowns(){
+    document.querySelectorAll("select").forEach(select=>{
+        const current = select.value;
+        select.innerHTML = "<option value=''>-- выбрать --</option>";
+        headers.forEach(header=>{
+            let option = document.createElement("option");
+            option.value = header;
+            option.text = header;
+            select.appendChild(option);
+        });
+        select.value = current;
+    });
+}
+
+function saveAndUpdate(){
+    const selected = [];
+    document.querySelectorAll("select").forEach(s=>selected.push(s.value));
+    localStorage.setItem("selectedColumns", JSON.stringify(selected));
+    updateAllRows();
+}
+
+function insertBulkSN(){
+    const lines = document.getElementById("bulkSN").value.split("\n");
+    lines.forEach(sn=>{
+        if(sn.trim() !== ""){
+            addRow(sn.trim());
+        }
+    });
+    updateAllRows();
+}
+
+function addRow(snValue=""){
+    let tbody = document.getElementById("tableBody");
+    let row = document.createElement("tr");
+
+    let snCell = document.createElement("td");
+    let input = document.createElement("input");
+    input.value = snValue;
+    input.oninput = updateAllRows;
+    snCell.appendChild(input);
+    row.appendChild(snCell);
+
+    for(let i=0;i<columnCount;i++){
+        row.appendChild(document.createElement("td"));
+    }
+
+    tbody.appendChild(row);
+}
+
+function findMatch(sn){
+    return reportData.find(row=>{
+        return Object.values(row).some(value=> value == sn);
+    });
+}
+
+function updateAllRows(){
+    const selects = document.querySelectorAll("select");
+    const rows = document.querySelectorAll("#tableBody tr");
+
+    rows.forEach(row=>{
+        const sn = row.cells[0].querySelector("input").value;
+        if(!sn) return;
+
+        const match = findMatch(sn);
+
+        if(match){
+            row.classList.remove("notfound");
+            row.classList.add("found");
+        } else {
+            row.classList.remove("found");
+            row.classList.add("notfound");
+        }
+
+        for(let i=0;i<selects.length;i++){
+            const col = selects[i].value;
+            row.cells[i+1].innerText = (match && col) ? match[col] || "" : "";
+        }
+    });
+}
+
+function exportExcel(){
+    let data = [];
+    const rows = document.querySelectorAll("#mainTable tr");
+
+    rows.forEach(row=>{
+        let rowData = [];
+        row.querySelectorAll("th,td").forEach(cell=>{
+            if(cell.querySelector("input")){
+                rowData.push(cell.querySelector("input").value);
+            } else if(cell.querySelector("select")){
+                rowData.push(cell.querySelector("select").value);
+            } else {
+                rowData.push(cell.innerText);
+            }
+        });
+        data.push(rowData);
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Results");
+    XLSX.writeFile(wb, "SNOC_Result.xlsx");
+}
+</script>
+
+</body>
+</html>
