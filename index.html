@@ -61,7 +61,52 @@ for(let i=0;i<columnCount;i++){
 }
 
 // загрузка файлов
-document.getElementById('upload').addEventListener('change', function(e){
+documedocument.getElementById('upload').addEventListener('change', function(e){
+    const files = e.target.files;
+
+    Array.from(files).forEach(file=>{
+        const reader = new FileReader();
+        reader.onload = function(e){
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data,{type:'array'});
+
+            workbook.SheetNames.forEach(sheetName=>{
+                const sheet = workbook.Sheets[sheetName];
+
+                // Читаем как массив массивов
+                const raw = XLSX.utils.sheet_to_json(sheet, {header:1});
+
+                if(raw.length < 2) return;
+
+                // Предполагаем что первая непустая строка — заголовки
+                let headerRowIndex = raw.findIndex(row => 
+                    row.some(cell => cell !== undefined && cell !== "")
+                );
+
+                if(headerRowIndex === -1) return;
+
+                const headerRow = raw[headerRowIndex];
+
+                const json = XLSX.utils.sheet_to_json(sheet, {
+                    header: headerRow,
+                    range: headerRowIndex + 1
+                });
+
+                json.forEach(row=>{
+                    reportData.push(row);
+                    Object.keys(row).forEach(key=>{
+                        if(key) headers.add(key);
+                    });
+                });
+            });
+
+            console.log("Загружено строк:", reportData.length);
+            localStorage.setItem("reportCache", JSON.stringify(reportData));
+            populateDropdowns();
+        };
+        reader.readAsArrayBuffer(file);
+    });
+});nt.getElementById('upload').addEventListener('change', function(e){
     const files = e.target.files;
 
     Array.from(files).forEach(file=>{
@@ -209,4 +254,5 @@ function exportExcel(){
 </script>
 
 </body>
+
 </html>
